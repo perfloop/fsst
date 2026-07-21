@@ -37,10 +37,6 @@ const (
 	// collisions. Limiting the heap to maxSymbols can leave the table partially
 	// filled and materially degrade compression.
 	maxCandidateSymbols = maxSymbols * 2
-
-	// Avoid retaining arbitrarily large selection buffers through the workspace
-	// pool while keeping enough capacity for the sampled corpus workloads.
-	maxReusableCandidateScratch = 4096
 )
 
 // Train builds and finalizes a compression Table from the provided corpora.
@@ -85,11 +81,7 @@ func newTrainingWorkspace() *trainingWorkspace {
 func (w *trainingWorkspace) reset() {
 	w.counter.reset()
 	clear(w.candidates)
-	if cap(w.heap) > maxReusableCandidateScratch {
-		w.heap = make(qsymHeap, 0, maxCandidateSymbols+1)
-	} else {
-		w.heap = w.heap[:0]
-	}
+	w.heap = w.heap[:0]
 	w.list = w.list[:0]
 }
 
@@ -334,6 +326,28 @@ func sortTopCandidates(source, destination []qsym) {
 	}
 }
 
+func selectCandidatesLarge(candidates map[[2]uint64]qsym, list *[]qsym) {
+	var scratch [maxCandidateSymbols * 8]qsym
+	selected := scratch[:0]
+	for _, candidate := range candidates {
+		selected = append(selected, candidate)
+		if len(selected) == len(scratch) {
+			partitionTopCandidates(selected, maxCandidateSymbols)
+			selected = selected[:maxCandidateSymbols]
+		}
+	}
+	if len(selected) > maxCandidateSymbols {
+		partitionTopCandidates(selected, maxCandidateSymbols)
+	}
+
+	if cap(*list) < maxCandidateSymbols {
+		*list = make([]qsym, maxCandidateSymbols)
+	} else {
+		*list = (*list)[:maxCandidateSymbols]
+	}
+	sortTopCandidates(selected[:maxCandidateSymbols], *list)
+}
+
 // buildCandidates selects the best symbol candidates from the frequency
 // counters and installs them into the table for the next iteration.
 //
@@ -414,17 +428,7 @@ func buildCandidates(t *Table, c *counters, frac int, candidates map[[2]uint64]q
 func selectCandidates(candidates map[[2]uint64]qsym, h *qsymHeap, list *[]qsym) {
 	*h = (*h)[:0]
 	if len(candidates) > maxCandidateSymbols {
-		for _, candidate := range candidates {
-			*h = append(*h, candidate)
-		}
-		partitionTopCandidates(*h, maxCandidateSymbols)
-
-		if cap(*list) < maxCandidateSymbols {
-			*list = make([]qsym, maxCandidateSymbols)
-		} else {
-			*list = (*list)[:maxCandidateSymbols]
-		}
-		sortTopCandidates((*h)[:maxCandidateSymbols], *list)
+		selectCandidatesLarge(candidates, list)
 		return
 	}
 
