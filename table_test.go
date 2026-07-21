@@ -2,6 +2,7 @@ package fsst
 
 import (
 	"bytes"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -63,10 +64,6 @@ func TestRebuildTableRoundtrip(t *testing.T) {
 	}
 }
 
-func byteOnlyFixture(size int) []byte {
-	return byteOnlyFixtureWithSeed(size, 0x9e3779b97f4a7c15)
-}
-
 func byteOnlyFixtureWithSeed(size int, seed uint64) []byte {
 	data := make([]byte, size)
 	state := seed
@@ -92,7 +89,7 @@ func byteOnlyOutput(table *Table, input []byte) []byte {
 }
 
 func TestByteOnlyTableEncoding(t *testing.T) {
-	input := byteOnlyFixture(1 << 18)
+	input := byteOnlyFixtureWithSeed(1<<18, 0x9e3779b97f4a7c15)
 	trained := Train([][]byte{input})
 	serialized, err := trained.MarshalBinary()
 	if err != nil {
@@ -150,6 +147,35 @@ func benchmarkByteOnlyEncodeInto(b *testing.B, table *Table, input, want []byte)
 	}
 }
 
+func benchmarkByteOnlyOverlappingEncodeInto(b *testing.B, outputOffset int) {
+	const size = 1 << 18
+	original := byteOnlyFixtureWithSeed(size, 0x9e3779b97f4a7c30)
+	table := Train(nil)
+	want := table.EncodeAll(original)
+	storage := make([]byte, 2*size+outputPadding+outputOffset)
+
+	copy(storage, original)
+	if got := table.EncodeInto(storage[outputOffset:outputOffset], storage[:size]); !bytes.Equal(got, want) {
+		b.Fatal("pre-benchmark overlapping EncodeInto output mismatch")
+	}
+
+	var output []byte
+	b.ReportAllocs()
+	b.SetBytes(int64(size))
+	b.ResetTimer()
+	for b.Loop() {
+		b.StopTimer()
+		copy(storage, original)
+		b.StartTimer()
+		output = table.EncodeInto(storage[outputOffset:outputOffset], storage[:size])
+	}
+	b.StopTimer()
+
+	if !bytes.Equal(output, want) {
+		b.Fatal("post-benchmark overlapping EncodeInto output mismatch")
+	}
+}
+
 func BenchmarkByteOnlyEncoding(b *testing.B) {
 	b.Run("HighEntropy256KiB", func(b *testing.B) {
 		input := byteOnlyFixtureWithSeed(1<<18, 0x9e3779b97f4a7c30)
@@ -158,6 +184,20 @@ func BenchmarkByteOnlyEncoding(b *testing.B) {
 			b.Fatalf("not byte-only: nSymbols=%d lenHisto=%v suffixLim=%d", table.nSymbols, table.lenHisto, table.suffixLim)
 		}
 		benchmarkByteOnlyEncodeInto(b, table, input, byteOnlyOutput(table, input))
+	})
+
+	b.Run("AllEscape256KiB", func(b *testing.B) {
+		input := byteOnlyFixtureWithSeed(1<<18, 0x9e3779b97f4a7c30)
+		table := Train(nil)
+		benchmarkByteOnlyEncodeInto(b, table, input, table.EncodeAll(input))
+	})
+
+	b.Run("AllEscapeOverlapSameStart256KiB", func(b *testing.B) {
+		benchmarkByteOnlyOverlappingEncodeInto(b, 0)
+	})
+
+	b.Run("AllEscapeOverlapOffset256KiB", func(b *testing.B) {
+		benchmarkByteOnlyOverlappingEncodeInto(b, 1)
 	})
 
 	b.Run("MultiByteControl", func(b *testing.B) {
@@ -171,6 +211,40 @@ func BenchmarkByteOnlyEncoding(b *testing.B) {
 		}
 		b.Fatal("control table has no multibyte symbols")
 	})
+}
+
+func TestByteOnlyOverlappingBuffer(t *testing.T) {
+	encoders := []struct {
+		name   string
+		encode func(*Table, []byte, []byte) []byte
+	}{
+		{name: "Encode", encode: func(table *Table, buf, input []byte) []byte { return table.Encode(buf, input) }},
+		{name: "EncodeInto", encode: func(table *Table, buf, input []byte) []byte { return table.EncodeInto(buf, input) }},
+	}
+
+	for _, outputOffset := range []int{0, 1} {
+		for _, size := range []int{1, 2, 7, 8, 9, 512} {
+			for _, encoder := range encoders {
+				t.Run(encoder.name+"/offset_"+strconv.Itoa(outputOffset)+"/"+strconv.Itoa(size), func(t *testing.T) {
+					table := Train(nil)
+					storage := make([]byte, 2*size+outputPadding+outputOffset)
+					input := storage[:size]
+					for index := range input {
+						input[index] = byte(index + 1)
+					}
+					original := bytes.Clone(input)
+					want := table.EncodeAll(original)
+					got := encoder.encode(table, storage[outputOffset:outputOffset], input)
+					if !bytes.Equal(got, want) {
+						t.Fatalf("overlapping output = %x, want %x", got, want)
+					}
+					if decoded := table.DecodeAll(got); !bytes.Equal(decoded, original) {
+						t.Fatalf("DecodeAll(overlapping output) = %x, want %x", decoded, original)
+					}
+				})
+			}
+		}
+	}
 }
 
 // TestTableLimits tests table behavior at limits
