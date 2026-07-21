@@ -71,10 +71,13 @@ type trainingWorkspace struct {
 }
 
 func newTrainingWorkspace() *trainingWorkspace {
+	// The large selector partitions one retained K prefix with one incoming K
+	// prefix, so both workspace views share exactly 2K entries.
+	scratch := make(qsymHeap, 0, maxCandidateSymbols*2)
 	return &trainingWorkspace{
 		candidates: make(map[[2]uint64]qsym, 512),
-		heap:       make(qsymHeap, 0, maxCandidateSymbols+1),
-		list:       make([]qsym, 0, maxCandidateSymbols),
+		heap:       scratch,
+		list:       scratch[maxCandidateSymbols : maxCandidateSymbols : maxCandidateSymbols*2],
 	}
 }
 
@@ -293,38 +296,29 @@ func sortTopCandidates(source, destination []qsym) {
 	}
 }
 
-func candidateAt(first, second []qsym, index int) *qsym {
-	if index < len(first) {
-		return &first[index]
-	}
-	return &second[index-len(first)]
-}
-
-// partitionTopCandidateBuffers keeps the strongest n values in first.
-func partitionTopCandidateBuffers(first, second []qsym, n int) {
-	left, right := 0, len(first)+len(second)-1
+func partitionTopCandidates(candidates []qsym, n int) {
+	left, right := 0, len(candidates)-1
 	target := n - 1
 	for left < right {
-		pivot := *candidateAt(first, second, left+(right-left)/2)
+		pivot := candidates[left+(right-left)/2]
 		i, j := left-1, right+1
 		for {
 			for {
 				i++
-				if !candidateAt(first, second, i).betterThan(pivot) {
+				if !candidates[i].betterThan(pivot) {
 					break
 				}
 			}
 			for {
 				j--
-				if !pivot.betterThan(*candidateAt(first, second, j)) {
+				if !pivot.betterThan(candidates[j]) {
 					break
 				}
 			}
 			if i >= j {
 				break
 			}
-			a, b := candidateAt(first, second, i), candidateAt(first, second, j)
-			*a, *b = *b, *a
+			candidates[i], candidates[j] = candidates[j], candidates[i]
 		}
 		if target <= j {
 			right = j
@@ -334,44 +328,27 @@ func partitionTopCandidateBuffers(first, second []qsym, n int) {
 	}
 }
 
-func weakestCandidate(candidates []qsym) qsym {
-	weakest := candidates[0]
-	for _, candidate := range candidates[1:] {
-		if weakest.betterThan(candidate) {
-			weakest = candidate
-		}
-	}
-	return weakest
-}
-
-// selectCandidatesLarge retains the current top K in h and uses list as the
-// next K-entry batch, so it reuses the workspace's fixed-size buffers.
+// selectCandidatesLarge keeps one retained prefix and one incoming prefix in
+// the workspace's contiguous scratch storage.
 func selectCandidatesLarge(candidates map[[2]uint64]qsym, h *qsymHeap, list *[]qsym) {
-	*list = (*list)[:0]
-	var weakest qsym
-	hasThreshold := false
+	if cap(*h) < maxCandidateSymbols*2 {
+		*h = make(qsymHeap, 0, maxCandidateSymbols*2)
+	}
+	selected := (*h)[:0]
 	for _, candidate := range candidates {
-		if len(*h) < maxCandidateSymbols {
-			*h = append(*h, candidate)
-			continue
-		}
-		if hasThreshold && !candidate.betterThan(weakest) {
-			continue
-		}
-		*list = append(*list, candidate)
-		if len(*list) == maxCandidateSymbols {
-			partitionTopCandidateBuffers(*h, *list, maxCandidateSymbols)
-			*list = (*list)[:0]
-			weakest = weakestCandidate(*h)
-			hasThreshold = true
+		selected = append(selected, candidate)
+		if len(selected) == cap(selected) {
+			partitionTopCandidates(selected, maxCandidateSymbols)
+			selected = selected[:maxCandidateSymbols]
 		}
 	}
-	if len(*list) > 0 {
-		partitionTopCandidateBuffers(*h, *list, maxCandidateSymbols)
+	if len(selected) > maxCandidateSymbols {
+		partitionTopCandidates(selected, maxCandidateSymbols)
 	}
 
-	*list = (*list)[:maxCandidateSymbols]
-	sortTopCandidates(*h, *list)
+	output := (*h)[maxCandidateSymbols : maxCandidateSymbols*2]
+	sortTopCandidates(selected[:maxCandidateSymbols], output)
+	*list = output
 }
 
 // buildCandidates selects the best symbol candidates from the frequency
@@ -384,10 +361,9 @@ func selectCandidatesLarge(candidates map[[2]uint64]qsym, h *qsymHeap, list *[]q
 //  2. Score merged pairs (early rounds only): concatenate each observed
 //     (sym1, sym2) pair into a candidate up to 8 bytes, scored the same way.
 //     This is how multi-byte symbols grow across iterations.
-//  3. Keep the best candidates in a min-heap, including enough extras to
-//     backfill symbols rejected by hash-table collisions. Extracting the heap
-//     from weakest to strongest directly into the list's tail leaves the list
-//     in descending rank order.
+//  3. Retain enough top-ranked candidates to backfill symbols rejected by
+//     hash-table collisions. Small maps use the min-heap; larger maps partition
+//     a bounded prefix and sort only the retained candidates in descending order.
 //
 // The map, heap, and list are reused across iterations to reduce GC pressure.
 func buildCandidates(t *Table, c *counters, frac int, candidates map[[2]uint64]qsym, h *qsymHeap, list *[]qsym) {

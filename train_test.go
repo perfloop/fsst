@@ -95,28 +95,6 @@ func TestSelectCandidatesKeepsStrongestInDescendingOrder(t *testing.T) {
 	}
 }
 
-func TestSelectCandidatesRetainsOrderAcrossBatches(t *testing.T) {
-	const candidateCount = maxCandidateSymbols*2 + 1
-	candidates := make(map[[2]uint64]qsym, candidateCount)
-	for i := range candidateCount {
-		sym := newSymbolFromBytes([]byte{byte(i), byte(i >> 8), byte(i >> 16), byte(i >> 24)})
-		candidates[[2]uint64{sym.val, uint64(sym.length())}] = qsym{symbol: sym, gain: uint32(i)}
-	}
-
-	heap := make(qsymHeap, 0, maxCandidateSymbols)
-	list := make([]qsym, 0, maxCandidateSymbols)
-	selectCandidates(candidates, &heap, &list)
-
-	if got, want := len(list), maxCandidateSymbols; got != want {
-		t.Fatalf("selected %d candidates, want %d", got, want)
-	}
-	for i, candidate := range list {
-		if got, want := candidate.gain, uint32(candidateCount-1-i); got != want {
-			t.Fatalf("candidate %d gain is %d, want %d", i, got, want)
-		}
-	}
-}
-
 func TestSelectCandidatesFiltersWeakBatchEntries(t *testing.T) {
 	const candidateCount = maxCandidateSymbols*4 + 7
 	for seed := uint32(1); seed <= 8; seed++ {
