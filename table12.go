@@ -333,14 +333,8 @@ func (t *Table12) Decode(buf, src []byte) []byte {
 	}
 	if buf == nil {
 		bufCap := len(src)*2 + 8
-		// EncodeAll retains ceil(3*inputLen/2) capacity, so its capacity
-		// recovers inputLen without scanning packed codes. Decode accepts
-		// arbitrary slices, so only use a hint within one input length of
-		// the normal estimate and retain the existing growth fallback.
-		srcCap := cap(src)
-		hint := srcCap/3*2 + srcCap%3*2/3 + outputPadding
-		if hint > bufCap && hint-bufCap <= len(src) {
-			bufCap = hint
+		if decodedLen := t.decodedLen(src) + outputPadding; decodedLen > bufCap {
+			bufCap = decodedLen
 		}
 		buf = make([]byte, bufCap)
 	} else {
@@ -413,6 +407,26 @@ func (t *Table12) Decode(buf, src []byte) []byte {
 	}
 
 	return buf[:bufPos]
+}
+
+// decodedLen returns the output length represented by packed source codes.
+// It mirrors Decode's two-code and two-byte-tail packing layout.
+func (t *Table12) decodedLen(src []byte) int {
+	decodedLen := 0
+	srcPos := 0
+	for srcPos+2 < len(src) {
+		b0, b1, b2 := src[srcPos], src[srcPos+1], src[srcPos+2]
+		c0 := uint16(b0) | (uint16(b1&0x0F) << 8)
+		c1 := uint16(b1>>4) | (uint16(b2) << 4)
+		decodedLen += int(t.decLen[c0]) + int(t.decLen[c1])
+		srcPos += 3
+	}
+	if srcPos+1 < len(src) {
+		b0, b1 := src[srcPos], src[srcPos+1]
+		c0 := uint16(b0) | (uint16(b1&0x0F) << 8)
+		decodedLen += int(t.decLen[c0])
+	}
+	return decodedLen
 }
 
 // DecodeInto decompresses src while reusing buf.
