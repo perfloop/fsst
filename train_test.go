@@ -64,7 +64,9 @@ func TestTrainDeterministicManyCandidates(t *testing.T) {
 }
 
 func TestSelectCandidatesKeepsStrongestInDescendingOrder(t *testing.T) {
-	const extraCandidates = maxCandidateScratchSymbols
+	// Fill the scratch buffer, then add one candidate to exercise compaction
+	// followed by the final partition.
+	const extraCandidates = maxCandidateSymbols + 1
 	candidates := make(map[[2]uint64]qsym, maxCandidateSymbols+extraCandidates)
 	for i := range maxCandidateSymbols + extraCandidates {
 		sym := newSymbolFromBytes([]byte{byte(i), byte(i >> 8)})

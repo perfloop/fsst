@@ -41,9 +41,9 @@ const (
 	// filled and materially degrade compression.
 	maxCandidateSymbols = maxSymbols * 2
 
-	// Bound pooled selection storage while covering the multi-thousand candidate
-	// maps produced by representative training corpora.
-	maxCandidateScratchSymbols = maxCandidateSymbols * 8
+	// Hold one retained prefix and one incoming batch without growing pooled
+	// selection storage.
+	maxCandidateScratchSymbols = maxCandidateSymbols * 2
 )
 
 // Train builds and finalizes a compression Table from the provided corpora.
