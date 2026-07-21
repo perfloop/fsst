@@ -64,27 +64,31 @@ func TestTrainDeterministicManyCandidates(t *testing.T) {
 }
 
 func TestSelectCandidatesKeepsStrongestInDescendingOrder(t *testing.T) {
-	const extraCandidates = 100
+	const extraCandidates = maxCandidateScratchSymbols
 	candidates := make(map[[2]uint64]qsym, maxCandidateSymbols+extraCandidates)
 	for i := range maxCandidateSymbols + extraCandidates {
 		sym := newSymbolFromBytes([]byte{byte(i), byte(i >> 8)})
 		candidates[[2]uint64{sym.val, uint64(sym.length())}] = qsym{
 			symbol: sym,
-			gain:   uint32(i),
+			gain:   uint32(i+1) * 2,
 		}
 	}
 
-	heap := make(qsymHeap, 0, maxCandidateSymbols)
-	list := make([]qsym, 0, maxCandidateSymbols)
-	selectCandidates(candidates, &heap, &list)
+	// Match Train's bounded workspace so this direct test does not force a
+	// growth path.
+	list := make([]qsym, 0, maxCandidateScratchSymbols)
+	selectCandidates(candidates, &list)
 
+	if got, want := cap(list), maxCandidateScratchSymbols; got != want {
+		t.Fatalf("selection scratch capacity is %d, want %d", got, want)
+	}
 	if len(list) != maxCandidateSymbols {
 		t.Fatalf("selected %d candidates, want %d", len(list), maxCandidateSymbols)
 	}
-	if got, want := list[0].gain, uint32(maxCandidateSymbols+extraCandidates-1); got != want {
+	if got, want := list[0].gain, uint32(maxCandidateSymbols+extraCandidates)*2; got != want {
 		t.Fatalf("strongest gain is %d, want %d", got, want)
 	}
-	if got, want := list[len(list)-1].gain, uint32(extraCandidates); got != want {
+	if got, want := list[len(list)-1].gain, uint32(extraCandidates+1)*2; got != want {
 		t.Fatalf("weakest selected gain is %d, want %d", got, want)
 	}
 	for i := 1; i < len(list); i++ {
