@@ -331,6 +331,9 @@ func (t *Table12) Decode(buf, src []byte) []byte {
 	if len(src) == 0 {
 		return buf[:0]
 	}
+	if buf == nil && t.hasLongDecodeSymbols() {
+		return t.decodeExact(src)
+	}
 
 	if buf == nil {
 		buf = make([]byte, len(src)*2+8)
@@ -404,6 +407,42 @@ func (t *Table12) Decode(buf, src []byte) []byte {
 	}
 
 	return buf[:bufPos]
+}
+
+// decodeExact allocates the returned output once when long symbols can exceed
+// the normal 2x source estimate.
+func (t *Table12) decodeExact(src []byte) []byte {
+	return t.Decode(make([]byte, t.decodedLen(src)+8), src)
+}
+
+// decodedLen returns the output length represented by the packed input.
+func (t *Table12) decodedLen(src []byte) int {
+	decodedLen := 0
+	srcPos := 0
+	for srcPos+2 < len(src) {
+		b0, b1, b2 := src[srcPos], src[srcPos+1], src[srcPos+2]
+		c0 := uint16(b0) | (uint16(b1&0x0F) << 8)
+		c1 := uint16(b1>>4) | (uint16(b2) << 4)
+		decodedLen += int(t.decLen[c0]) + int(t.decLen[c1])
+		srcPos += 3
+	}
+	if srcPos+1 < len(src) {
+		b0, b1 := src[srcPos], src[srcPos+1]
+		c0 := uint16(b0) | (uint16(b1&0x0F) << 8)
+		decodedLen += int(t.decLen[c0])
+	}
+	return decodedLen
+}
+
+// hasLongDecodeSymbols reports whether a packed code can emit more than three bytes.
+// Without one, two codes per three source bytes always fit the 2x estimate.
+func (t *Table12) hasLongDecodeSymbols() bool {
+	for _, count := range t.lenHisto[3:] {
+		if count != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // DecodeInto decompresses src while reusing buf.
