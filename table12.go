@@ -331,10 +331,9 @@ func (t *Table12) Decode(buf, src []byte) []byte {
 	if len(src) == 0 {
 		return buf[:0]
 	}
-	if buf == nil && t.hasLongDecodeSymbols() {
-		return t.decodeExact(src)
+	if buf == nil && t.shouldPreflight(src) {
+		buf = make([]byte, t.decodedLen(src)+8)
 	}
-
 	if buf == nil {
 		buf = make([]byte, len(src)*2+8)
 	} else {
@@ -346,6 +345,10 @@ func (t *Table12) Decode(buf, src []byte) []byte {
 		}
 	}
 
+	return t.decodePrepared(buf, src)
+}
+
+func (t *Table12) decodePrepared(buf, src []byte) []byte {
 	bufPos := 0
 	bufCap := len(buf)
 
@@ -409,12 +412,6 @@ func (t *Table12) Decode(buf, src []byte) []byte {
 	return buf[:bufPos]
 }
 
-// decodeExact allocates the returned output once when long symbols can exceed
-// the normal 2x source estimate.
-func (t *Table12) decodeExact(src []byte) []byte {
-	return t.Decode(make([]byte, t.decodedLen(src)+8), src)
-}
-
 // decodedLen returns the output length represented by the packed input.
 func (t *Table12) decodedLen(src []byte) int {
 	decodedLen := 0
@@ -434,15 +431,11 @@ func (t *Table12) decodedLen(src []byte) int {
 	return decodedLen
 }
 
-// hasLongDecodeSymbols reports whether a packed code can emit more than three bytes.
-// Without one, two codes per three source bytes always fit the 2x estimate.
-func (t *Table12) hasLongDecodeSymbols() bool {
-	for _, count := range t.lenHisto[3:] {
-		if count != 0 {
-			return true
-		}
-	}
-	return false
+// shouldPreflight recognizes an expanding stream from its first three packed pairs.
+// Streams that do not pass this inexpensive probe retain the existing growth fallback.
+func (t *Table12) shouldPreflight(src []byte) bool {
+	const probeLen = 9
+	return len(src) >= probeLen && t.decodedLen(src[:probeLen]) > probeLen*2
 }
 
 // DecodeInto decompresses src while reusing buf.
