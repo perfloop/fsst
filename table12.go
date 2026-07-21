@@ -332,11 +332,17 @@ func (t *Table12) Decode(buf, src []byte) []byte {
 		return buf[:0]
 	}
 	if buf == nil {
-		if t.shouldPreflight(src) {
-			buf = make([]byte, t.decodedLen(src)+7)
-		} else {
-			buf = make([]byte, len(src)*2+8)
+		bufCap := len(src)*2 + 8
+		// EncodeAll retains ceil(3*inputLen/2) capacity, so its capacity
+		// recovers inputLen without scanning packed codes. Decode accepts
+		// arbitrary slices, so only use a hint within one input length of
+		// the normal estimate and retain the existing growth fallback.
+		srcCap := cap(src)
+		hint := srcCap/3*2 + srcCap%3*2/3 + outputPadding
+		if hint > bufCap && hint-bufCap <= len(src) {
+			bufCap = hint
 		}
+		buf = make([]byte, bufCap)
 	} else {
 		buf = buf[:0]
 		if cap(buf) < 8 {
@@ -407,32 +413,6 @@ func (t *Table12) Decode(buf, src []byte) []byte {
 	}
 
 	return buf[:bufPos]
-}
-
-// decodedLen returns the output length represented by the packed input.
-func (t *Table12) decodedLen(src []byte) int {
-	decodedLen := 0
-	srcPos := 0
-	for srcPos+2 < len(src) {
-		b0, b1, b2 := src[srcPos], src[srcPos+1], src[srcPos+2]
-		c0 := uint16(b0) | (uint16(b1&0x0F) << 8)
-		c1 := uint16(b1>>4) | (uint16(b2) << 4)
-		decodedLen += int(t.decLen[c0]) + int(t.decLen[c1])
-		srcPos += 3
-	}
-	if srcPos+1 < len(src) {
-		b0, b1 := src[srcPos], src[srcPos+1]
-		c0 := uint16(b0) | (uint16(b1&0x0F) << 8)
-		decodedLen += int(t.decLen[c0])
-	}
-	return decodedLen
-}
-
-// shouldPreflight recognizes an expanding stream from its first three packed pairs.
-// Streams that do not pass this inexpensive probe retain the existing growth fallback.
-func (t *Table12) shouldPreflight(src []byte) bool {
-	const probeLen = 9
-	return len(src) >= probeLen && t.decodedLen(src[:probeLen]) > probeLen*2
 }
 
 // DecodeInto decompresses src while reusing buf.
