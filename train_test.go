@@ -94,6 +94,42 @@ func TestSelectCandidatesKeepsStrongestInDescendingOrder(t *testing.T) {
 	}
 }
 
+func TestSelectCandidatesPreservesLengthTieBreak(t *testing.T) {
+	candidates := make(map[[2]uint64]qsym, maxCandidateSymbols+1)
+	short := newSymbolFromBytes([]byte{'a'})
+	long := newSymbolFromBytes([]byte{'a', 0})
+	for _, candidate := range []qsym{
+		{symbol: short, gain: 10_000},
+		{symbol: long, gain: 10_000},
+	} {
+		candidates[[2]uint64{candidate.symbol.val, uint64(candidate.symbol.length())}] = candidate
+	}
+	for i := range maxCandidateSymbols - 1 {
+		sym := newSymbolFromBytes([]byte{byte(i), byte(i >> 8), 0xff, 0xff})
+		candidates[[2]uint64{sym.val, uint64(sym.length())}] = qsym{symbol: sym, gain: uint32(i + 1)}
+	}
+
+	heap := make(qsymHeap, 0, maxCandidateSymbols)
+	list := make([]qsym, 0, maxCandidateSymbols)
+	selectCandidates(candidates, &heap, &list)
+
+	shortIndex, longIndex := -1, -1
+	for i, candidate := range list {
+		switch candidate.symbol {
+		case short:
+			shortIndex = i
+		case long:
+			longIndex = i
+		}
+	}
+	if shortIndex < 0 || longIndex < 0 {
+		t.Fatalf("length-tied candidates were not both selected")
+	}
+	if shortIndex >= longIndex {
+		t.Fatalf("shorter length-tied candidate ranked at %d, want before %d", shortIndex, longIndex)
+	}
+}
+
 func TestTrainEncodeDecode(t *testing.T) {
 	inputs := [][]byte{
 		[]byte("hello world"),

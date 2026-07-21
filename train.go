@@ -37,6 +37,10 @@ const (
 	// collisions. Limiting the heap to maxSymbols can leave the table partially
 	// filled and materially degrade compression.
 	maxCandidateSymbols = maxSymbols * 2
+
+	// Avoid retaining arbitrarily large selection buffers through the workspace
+	// pool while keeping enough capacity for the sampled corpus workloads.
+	maxReusableCandidateScratch = 4096
 )
 
 // Train builds and finalizes a compression Table from the provided corpora.
@@ -81,7 +85,11 @@ func newTrainingWorkspace() *trainingWorkspace {
 func (w *trainingWorkspace) reset() {
 	w.counter.reset()
 	clear(w.candidates)
-	w.heap = w.heap[:0]
+	if cap(w.heap) > maxReusableCandidateScratch {
+		w.heap = make(qsymHeap, 0, maxCandidateSymbols+1)
+	} else {
+		w.heap = w.heap[:0]
+	}
 	w.list = w.list[:0]
 }
 
@@ -243,6 +251,89 @@ func (h *qsymHeap) down(parent int) {
 	}
 }
 
+// partitionTopCandidates puts the strongest n candidates in the slice prefix.
+func partitionTopCandidates(candidates []qsym, n int) {
+	left, right := 0, len(candidates)-1
+	target := n - 1
+	for left < right {
+		pivot := candidates[left+(right-left)/2]
+		i, j := left-1, right+1
+		for {
+			for {
+				i++
+				if !candidates[i].betterThan(pivot) {
+					break
+				}
+			}
+			for {
+				j--
+				if !pivot.betterThan(candidates[j]) {
+					break
+				}
+			}
+			if i >= j {
+				break
+			}
+			candidates[i], candidates[j] = candidates[j], candidates[i]
+		}
+		if target <= j {
+			right = j
+		} else {
+			left = j + 1
+		}
+	}
+}
+
+func candidateRadixKey(candidate qsym, pass, valueBytes int) byte {
+	switch {
+	case pass == 0:
+		return byte(candidate.symbol.length())
+	case pass <= valueBytes:
+		return byte(candidate.symbol.val >> (8 * (pass - 1)))
+	default:
+		return ^byte(candidate.gain >> (8 * (pass - 1 - valueBytes)))
+	}
+}
+
+// sortTopCandidates orders the selected prefix by qsym's total ordering.
+func sortTopCandidates(source, destination []qsym) {
+	var maxGain uint32
+	var maxLength uint32
+	for _, candidate := range source {
+		maxGain = max(maxGain, candidate.gain)
+		maxLength = max(maxLength, candidate.symbol.length())
+	}
+
+	gainBytes := 1
+	for gain := maxGain; gain > 0xff; gain >>= 8 {
+		gainBytes++
+	}
+
+	var counts [256]uint16
+	passes := 0
+	for pass := 0; pass < 1+int(maxLength)+gainBytes; pass++ {
+		clear(counts[:])
+		for _, candidate := range source {
+			counts[candidateRadixKey(candidate, pass, int(maxLength))]++
+		}
+		var offset uint16
+		for i, count := range counts {
+			counts[i] = offset
+			offset += count
+		}
+		for _, candidate := range source {
+			key := candidateRadixKey(candidate, pass, int(maxLength))
+			destination[counts[key]] = candidate
+			counts[key]++
+		}
+		source, destination = destination, source
+		passes++
+	}
+	if passes%2 == 0 {
+		copy(destination, source)
+	}
+}
+
 // buildCandidates selects the best symbol candidates from the frequency
 // counters and installs them into the table for the next iteration.
 //
@@ -322,13 +413,23 @@ func buildCandidates(t *Table, c *counters, frac int, candidates map[[2]uint64]q
 
 func selectCandidates(candidates map[[2]uint64]qsym, h *qsymHeap, list *[]qsym) {
 	*h = (*h)[:0]
-	for _, candidate := range candidates {
-		if len(*h) < maxCandidateSymbols {
-			h.push(candidate)
-		} else if candidate.betterThan((*h)[0]) {
-			(*h)[0] = candidate
-			h.down(0)
+	if len(candidates) > maxCandidateSymbols {
+		for _, candidate := range candidates {
+			*h = append(*h, candidate)
 		}
+		partitionTopCandidates(*h, maxCandidateSymbols)
+
+		if cap(*list) < maxCandidateSymbols {
+			*list = make([]qsym, maxCandidateSymbols)
+		} else {
+			*list = (*list)[:maxCandidateSymbols]
+		}
+		sortTopCandidates((*h)[:maxCandidateSymbols], *list)
+		return
+	}
+
+	for _, candidate := range candidates {
+		h.push(candidate)
 	}
 
 	if cap(*list) < len(*h) {
