@@ -196,6 +196,87 @@ func TestTable12ReadFromMalformed(t *testing.T) {
 	})
 }
 
+func table12MixedDecodeFixture(tb testing.TB) (*Table12, []byte, []byte, []byte) {
+	tb.Helper()
+
+	training := bytes.Repeat([]byte("the quick brown fox jumps over the lazy dog "), 1000)
+	table := Train12([][]byte{training})
+	trainingEncoded := table.EncodeAll(training)
+	const prefixBytes = 9
+	prefix := append([]byte(nil), trainingEncoded[:prefixBytes]...)
+	prefixDecoded := table.DecodeAll(prefix)
+	if len(prefixDecoded) <= len(prefix)*2 {
+		tb.Fatalf("prefix does not exceed the 2x estimate: decoded=%d encoded=%d", len(prefixDecoded), len(prefix))
+	}
+
+	tail := make([]byte, 48*1024)
+	state := uint64(0x9e3779b97f4a7c15)
+	for i := range tail {
+		state = state*6364136223846793005 + 1442695040888963407
+		tail[i] = byte(state >> 56)
+	}
+	tailEncoded := table.EncodeAll(tail)
+	if len(tailEncoded)%3 != 0 {
+		tb.Fatalf("literal tail has incomplete packed group: encoded=%d", len(tailEncoded))
+	}
+
+	input := make([]byte, len(prefixDecoded)+len(tail))
+	copy(input, prefixDecoded)
+	copy(input[len(prefixDecoded):], tail)
+	encoded := make([]byte, len(prefix)+len(tailEncoded))
+	copy(encoded, prefix)
+	copy(encoded[len(prefix):], tailEncoded)
+	if len(input) > len(encoded)*2+8 {
+		tb.Fatalf("mixed payload unexpectedly exceeds the 2x estimate: input=%d encoded=%d", len(input), len(encoded))
+	}
+	return table, input, encoded, prefix
+}
+
+func TestTable12DecodeSourceCapacityInvariant(t *testing.T) {
+	table, input, encoded, _ := table12MixedDecodeFixture(t)
+
+	exact := make([]byte, len(encoded))
+	copy(exact, encoded)
+	retained := make([]byte, len(encoded), len(encoded)*4)
+	copy(retained, encoded)
+
+	decodedExact := table.DecodeAll(exact)
+	decodedRetained := table.DecodeAll(retained)
+	if !bytes.Equal(decodedExact, input) || !bytes.Equal(decodedRetained, input) {
+		t.Fatal("DecodeAll changed output for an equivalent retained source")
+	}
+	if cap(decodedExact) != cap(decodedRetained) {
+		t.Fatalf("DecodeAll output capacity depends on source capacity: exact=%d retained=%d", cap(decodedExact), cap(decodedRetained))
+	}
+}
+
+func TestTable12DecodeUnassignedTail(t *testing.T) {
+	table, _, _, prefix := table12MixedDecodeFixture(t)
+
+	unassigned := fsst12CodeMax - 1
+	for unassigned >= fsst12CodeBase && table.decLen[unassigned] != 0 {
+		unassigned--
+	}
+	if unassigned < fsst12CodeBase {
+		t.Fatal("fixture table unexpectedly assigns every non-literal code")
+	}
+
+	want := table.DecodeAll(prefix)
+	encoded := append(append([]byte(nil), prefix...), byte(unassigned), byte(unassigned>>8))
+	var got []byte
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				t.Fatalf("DecodeAll panicked on an unassigned tail code: %v", recovered)
+			}
+		}()
+		got = table.DecodeAll(encoded)
+	}()
+	if !bytes.Equal(got, want) {
+		t.Fatalf("DecodeAll unassigned-tail output mismatch: got %d bytes, want %d", len(got), len(want))
+	}
+}
+
 func BenchmarkTable12Encode(b *testing.B) {
 	data := bytes.Repeat([]byte("the quick brown fox jumps over the lazy dog "), 1000)
 	tbl := Train12([][]byte{data})

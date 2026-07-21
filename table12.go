@@ -331,12 +331,9 @@ func (t *Table12) Decode(buf, src []byte) []byte {
 	if len(src) == 0 {
 		return buf[:0]
 	}
+
 	if buf == nil {
-		bufCap := len(src)*2 + 8
-		if decodedLen := t.decodedLen(src) + outputPadding; decodedLen > bufCap {
-			bufCap = decodedLen
-		}
-		buf = make([]byte, bufCap)
+		buf = make([]byte, len(src)*2+8)
 	} else {
 		buf = buf[:0]
 		if cap(buf) < 8 {
@@ -407,26 +404,6 @@ func (t *Table12) Decode(buf, src []byte) []byte {
 	}
 
 	return buf[:bufPos]
-}
-
-// decodedLen returns the output length represented by packed source codes.
-// It mirrors Decode's two-code and two-byte-tail packing layout.
-func (t *Table12) decodedLen(src []byte) int {
-	decodedLen := 0
-	srcPos := 0
-	for srcPos+2 < len(src) {
-		b0, b1, b2 := src[srcPos], src[srcPos+1], src[srcPos+2]
-		c0 := uint16(b0) | (uint16(b1&0x0F) << 8)
-		c1 := uint16(b1>>4) | (uint16(b2) << 4)
-		decodedLen += int(t.decLen[c0]) + int(t.decLen[c1])
-		srcPos += 3
-	}
-	if srcPos+1 < len(src) {
-		b0, b1 := src[srcPos], src[srcPos+1]
-		c0 := uint16(b0) | (uint16(b1&0x0F) << 8)
-		decodedLen += int(t.decLen[c0])
-	}
-	return decodedLen
 }
 
 // DecodeInto decompresses src while reusing buf.
