@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -64,40 +65,51 @@ func TestTrainDeterministicManyCandidates(t *testing.T) {
 }
 
 func TestSelectCandidatesKeepsStrongestInDescendingOrder(t *testing.T) {
-	// Fill the scratch buffer, then add one candidate to exercise compaction
-	// followed by the final partition.
-	const extraCandidates = maxCandidateSymbols + 1
-	candidates := make(map[[2]uint64]qsym, maxCandidateSymbols+extraCandidates)
-	for i := range maxCandidateSymbols + extraCandidates {
-		sym := newSymbolFromBytes([]byte{byte(i), byte(i >> 8)})
-		candidates[[2]uint64{sym.val, uint64(sym.length())}] = qsym{
-			symbol: sym,
-			gain:   uint32(i+1) * 2,
-		}
+	// This deterministic byte corpus produces an actual buildCandidates map with
+	// more than eight retained prefixes' worth of two-byte candidates. It is
+	// deliberately run through the Train counting and candidate-building path,
+	// rather than constructing qsym values with gains that path cannot emit.
+	input := make([]byte, sampleTarget)
+	state := uint64(0x9e3779b97f4a7c15)
+	for i := range input {
+		state ^= state << 7
+		state ^= state >> 9
+		state ^= state << 8
+		input[i] = byte(state)
 	}
 
-	// Match Train's bounded workspace so this direct test does not force a
-	// growth path.
-	list := make([]qsym, 0, maxCandidateScratchSymbols)
-	selectCandidates(candidates, &list)
+	table := newTable()
+	workspace := newTrainingWorkspace()
+	for frac := 8; ; frac += 30 {
+		workspace.counter.reset()
+		compressCount(table, &workspace.counter, [][]byte{input}, frac)
+		buildCandidates(table, &workspace.counter, frac, workspace.candidates, &workspace.selected)
 
-	if got, want := cap(list), maxCandidateScratchSymbols; got != want {
-		t.Fatalf("selection scratch capacity is %d, want %d", got, want)
-	}
-	if len(list) != maxCandidateSymbols {
-		t.Fatalf("selected %d candidates, want %d", len(list), maxCandidateSymbols)
-	}
-	if got, want := list[0].gain, uint32(maxCandidateSymbols+extraCandidates)*2; got != want {
-		t.Fatalf("strongest gain is %d, want %d", got, want)
-	}
-	if got, want := list[len(list)-1].gain, uint32(extraCandidates+1)*2; got != want {
-		t.Fatalf("weakest selected gain is %d, want %d", got, want)
-	}
-	for i := 1; i < len(list); i++ {
-		if list[i].betterThan(list[i-1]) {
-			t.Fatalf("candidate %d is stronger than predecessor", i)
+		if len(workspace.candidates) > 8*maxCandidateSymbols {
+			if got, want := cap(workspace.selected), maxCandidateScratchSymbols; got != want {
+				t.Fatalf("selection scratch capacity is %d, want %d", got, want)
+			}
+			if got, want := len(workspace.selected), maxCandidateSymbols; got != want {
+				t.Fatalf("selected %d candidates, want %d", got, want)
+			}
+
+			want := make([]qsym, 0, len(workspace.candidates))
+			for _, candidate := range workspace.candidates {
+				want = append(want, candidate)
+			}
+			slices.SortFunc(want, compareQsym)
+			for i, got := range workspace.selected {
+				if got != want[i] {
+					t.Fatalf("candidate %d = %#v, want %#v", i, got, want[i])
+				}
+			}
+			return
+		}
+		if frac >= 128 {
+			break
 		}
 	}
+	t.Fatalf("candidate corpus never exceeded %d entries", 8*maxCandidateSymbols)
 }
 
 func TestTrainEncodeDecode(t *testing.T) {
