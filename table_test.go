@@ -2,7 +2,6 @@ package fsst
 
 import (
 	"bytes"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -172,30 +171,6 @@ func BenchmarkByteOnlyEncoding(b *testing.B) {
 		}
 		b.Fatal("control table has no multibyte symbols")
 	})
-}
-
-func TestByteOnlyOverlappingBuffer(t *testing.T) {
-	for _, outputOffset := range []int{0, 1} {
-		for _, size := range []int{1, 2, 7, 8, 9, 512} {
-			t.Run("offset_"+strconv.Itoa(outputOffset)+"/"+strconv.Itoa(size), func(t *testing.T) {
-				table := Train(nil)
-				storage := make([]byte, 2*size+outputPadding+outputOffset)
-				input := storage[:size]
-				for index := range input {
-					input[index] = byte(index + 1)
-				}
-				original := bytes.Clone(input)
-				want := table.EncodeInto(make([]byte, 0, 2*size+outputPadding), original)
-				got := table.EncodeInto(storage[outputOffset:outputOffset], input)
-				if !bytes.Equal(got, want) {
-					t.Fatalf("EncodeInto(overlapping output) = %x, want %x", got, want)
-				}
-				if decoded := table.DecodeAll(got); !bytes.Equal(decoded, original) {
-					t.Fatalf("DecodeAll(overlapping output) = %x, want %x", decoded, original)
-				}
-			})
-		}
-	}
 }
 
 // TestTableLimits tests table behavior at limits

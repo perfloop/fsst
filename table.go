@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
-	"unsafe"
 )
 
 // Table holds a trained symbol table for compression and decompression.
@@ -409,9 +408,6 @@ func (t *Table) Encode(buf, input []byte) []byte {
 	}
 
 	if t.lenHisto[0] == t.nSymbols && t.suffixLim == 0 {
-		if buffersOverlap(buf[:2*len(input)], input) {
-			input = bytes.Clone(input)
-		}
 		return t.encodeByteOnly(buf, input)
 	}
 
@@ -450,16 +446,6 @@ func (t *Table) encodeByteOnly(dst, input []byte) []byte {
 		}
 	}
 	return dst[:dstPos]
-}
-
-// buffersOverlap reports whether a and b share storage.
-func buffersOverlap(a, b []byte) bool {
-	if len(a) == 0 || len(b) == 0 {
-		return false
-	}
-	aStart := uintptr(unsafe.Pointer(unsafe.SliceData(a)))
-	bStart := uintptr(unsafe.Pointer(unsafe.SliceData(b)))
-	return aStart < bStart+uintptr(len(b)) && bStart < aStart+uintptr(len(a))
 }
 
 // EncodeInto compresses input while reusing buf. It is the named-buffer form
