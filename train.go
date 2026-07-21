@@ -243,39 +243,6 @@ func (h *qsymHeap) down(parent int) {
 	}
 }
 
-// partitionTopCandidates puts the strongest n candidates in the slice prefix.
-func partitionTopCandidates(candidates []qsym, n int) {
-	left, right := 0, len(candidates)-1
-	target := n - 1
-	for left < right {
-		pivot := candidates[left+(right-left)/2]
-		i, j := left-1, right+1
-		for {
-			for {
-				i++
-				if !candidates[i].betterThan(pivot) {
-					break
-				}
-			}
-			for {
-				j--
-				if !pivot.betterThan(candidates[j]) {
-					break
-				}
-			}
-			if i >= j {
-				break
-			}
-			candidates[i], candidates[j] = candidates[j], candidates[i]
-		}
-		if target <= j {
-			right = j
-		} else {
-			left = j + 1
-		}
-	}
-}
-
 func candidateRadixKey(candidate qsym, pass, valueBytes int) byte {
 	switch {
 	case pass == 0:
@@ -326,26 +293,85 @@ func sortTopCandidates(source, destination []qsym) {
 	}
 }
 
-func selectCandidatesLarge(candidates map[[2]uint64]qsym, list *[]qsym) {
-	var scratch [maxCandidateSymbols * 8]qsym
-	selected := scratch[:0]
-	for _, candidate := range candidates {
-		selected = append(selected, candidate)
-		if len(selected) == len(scratch) {
-			partitionTopCandidates(selected, maxCandidateSymbols)
-			selected = selected[:maxCandidateSymbols]
+func candidateAt(first, second []qsym, index int) *qsym {
+	if index < len(first) {
+		return &first[index]
+	}
+	return &second[index-len(first)]
+}
+
+// partitionTopCandidateBuffers keeps the strongest n values in first.
+func partitionTopCandidateBuffers(first, second []qsym, n int) {
+	left, right := 0, len(first)+len(second)-1
+	target := n - 1
+	for left < right {
+		pivot := *candidateAt(first, second, left+(right-left)/2)
+		i, j := left-1, right+1
+		for {
+			for {
+				i++
+				if !candidateAt(first, second, i).betterThan(pivot) {
+					break
+				}
+			}
+			for {
+				j--
+				if !pivot.betterThan(*candidateAt(first, second, j)) {
+					break
+				}
+			}
+			if i >= j {
+				break
+			}
+			a, b := candidateAt(first, second, i), candidateAt(first, second, j)
+			*a, *b = *b, *a
+		}
+		if target <= j {
+			right = j
+		} else {
+			left = j + 1
 		}
 	}
-	if len(selected) > maxCandidateSymbols {
-		partitionTopCandidates(selected, maxCandidateSymbols)
+}
+
+func weakestCandidate(candidates []qsym) qsym {
+	weakest := candidates[0]
+	for _, candidate := range candidates[1:] {
+		if weakest.betterThan(candidate) {
+			weakest = candidate
+		}
+	}
+	return weakest
+}
+
+// selectCandidatesLarge retains the current top K in h and uses list as the
+// next K-entry batch, so it reuses the workspace's fixed-size buffers.
+func selectCandidatesLarge(candidates map[[2]uint64]qsym, h *qsymHeap, list *[]qsym) {
+	*list = (*list)[:0]
+	var weakest qsym
+	hasThreshold := false
+	for _, candidate := range candidates {
+		if len(*h) < maxCandidateSymbols {
+			*h = append(*h, candidate)
+			continue
+		}
+		if hasThreshold && !candidate.betterThan(weakest) {
+			continue
+		}
+		*list = append(*list, candidate)
+		if len(*list) == maxCandidateSymbols {
+			partitionTopCandidateBuffers(*h, *list, maxCandidateSymbols)
+			*list = (*list)[:0]
+			weakest = weakestCandidate(*h)
+			hasThreshold = true
+		}
+	}
+	if len(*list) > 0 {
+		partitionTopCandidateBuffers(*h, *list, maxCandidateSymbols)
 	}
 
-	if cap(*list) < maxCandidateSymbols {
-		*list = make([]qsym, maxCandidateSymbols)
-	} else {
-		*list = (*list)[:maxCandidateSymbols]
-	}
-	sortTopCandidates(selected[:maxCandidateSymbols], *list)
+	*list = (*list)[:maxCandidateSymbols]
+	sortTopCandidates(*h, *list)
 }
 
 // buildCandidates selects the best symbol candidates from the frequency
@@ -428,7 +454,7 @@ func buildCandidates(t *Table, c *counters, frac int, candidates map[[2]uint64]q
 func selectCandidates(candidates map[[2]uint64]qsym, h *qsymHeap, list *[]qsym) {
 	*h = (*h)[:0]
 	if len(candidates) > maxCandidateSymbols {
-		selectCandidatesLarge(candidates, list)
+		selectCandidatesLarge(candidates, h, list)
 		return
 	}
 

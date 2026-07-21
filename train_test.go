@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -94,8 +95,8 @@ func TestSelectCandidatesKeepsStrongestInDescendingOrder(t *testing.T) {
 	}
 }
 
-func TestSelectCandidatesBatchesOversizedInput(t *testing.T) {
-	const candidateCount = maxCandidateSymbols*8 + 1
+func TestSelectCandidatesRetainsOrderAcrossBatches(t *testing.T) {
+	const candidateCount = maxCandidateSymbols*2 + 1
 	candidates := make(map[[2]uint64]qsym, candidateCount)
 	for i := range candidateCount {
 		sym := newSymbolFromBytes([]byte{byte(i), byte(i >> 8), byte(i >> 16), byte(i >> 24)})
@@ -112,6 +113,44 @@ func TestSelectCandidatesBatchesOversizedInput(t *testing.T) {
 	for i, candidate := range list {
 		if got, want := candidate.gain, uint32(candidateCount-1-i); got != want {
 			t.Fatalf("candidate %d gain is %d, want %d", i, got, want)
+		}
+	}
+}
+
+func TestSelectCandidatesFiltersWeakBatchEntries(t *testing.T) {
+	const candidateCount = maxCandidateSymbols*4 + 7
+	for seed := uint32(1); seed <= 8; seed++ {
+		candidates := make(map[[2]uint64]qsym, candidateCount)
+		state := seed
+		for i := range candidateCount {
+			state = state*1_664_525 + 1_013_904_223
+			sym := newSymbolFromBytes([]byte{byte(i), byte(i >> 8), byte(i >> 16), byte(i >> 24), byte(seed)})
+			candidates[[2]uint64{sym.val, uint64(sym.length())}] = qsym{symbol: sym, gain: state}
+		}
+
+		want := make([]qsym, 0, len(candidates))
+		for _, candidate := range candidates {
+			want = append(want, candidate)
+		}
+		slices.SortFunc(want, func(a, b qsym) int {
+			switch {
+			case a.betterThan(b):
+				return -1
+			case b.betterThan(a):
+				return 1
+			default:
+				return 0
+			}
+		})
+		want = want[:maxCandidateSymbols]
+
+		heap := make(qsymHeap, 0, maxCandidateSymbols)
+		list := make([]qsym, 0, maxCandidateSymbols)
+		for range 4 {
+			selectCandidates(candidates, &heap, &list)
+			if !slices.Equal(list, want) {
+				t.Fatalf("seed %d selected candidates differ from full ordering", seed)
+			}
 		}
 	}
 }
