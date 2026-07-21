@@ -63,6 +63,93 @@ func TestRebuildTableRoundtrip(t *testing.T) {
 	}
 }
 
+func byteOnlyFixture(size int) []byte {
+	data := make([]byte, size)
+	state := uint64(0x9e3779b97f4a7c15)
+	for i := range data {
+		state ^= state << 13
+		state ^= state >> 7
+		state ^= state << 17
+		data[i] = byte(state >> 24)
+	}
+	return data
+}
+
+func byteOnlyOutput(table *Table, input []byte) []byte {
+	output := make([]byte, 0, 2*len(input))
+	for _, value := range input {
+		code := table.byteCodes[value]
+		output = append(output, byte(code))
+		if code&codeBase != 0 {
+			output = append(output, value)
+		}
+	}
+	return output
+}
+
+func TestByteOnlyTableEncoding(t *testing.T) {
+	input := byteOnlyFixture(1 << 18)
+	trained := Train([][]byte{input})
+	serialized, err := trained.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var restored Table
+	if err := restored.UnmarshalBinary(serialized); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	for _, test := range []struct {
+		name  string
+		table *Table
+	}{
+		{name: "trained", table: trained},
+		{name: "restored", table: &restored},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.table.lenHisto[0] != test.table.nSymbols || test.table.suffixLim != 0 {
+				t.Fatalf("not byte-only: nSymbols=%d lenHisto=%v suffixLim=%d", test.table.nSymbols, test.table.lenHisto, test.table.suffixLim)
+			}
+			for _, size := range []int{0, 1, 7, 8, 9, 510, 511, 512, 513, len(input)} {
+				input := input[:size]
+				want := byteOnlyOutput(test.table, input)
+				got := test.table.EncodeInto(make([]byte, 0, 2*len(input)+outputPadding), input)
+				if !bytes.Equal(got, want) {
+					t.Fatalf("EncodeInto(%d) = %x, want %x", size, got, want)
+				}
+				if decoded := test.table.DecodeAll(got); !bytes.Equal(decoded, input) {
+					t.Fatalf("DecodeAll(EncodeInto(%d)) = %x, want %x", size, decoded, input)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkByteOnlyEncoding(b *testing.B) {
+	input := byteOnlyFixture(1 << 18)
+	table := Train([][]byte{input})
+	if table.lenHisto[0] != table.nSymbols || table.suffixLim != 0 {
+		b.Fatalf("not byte-only: nSymbols=%d lenHisto=%v suffixLim=%d", table.nSymbols, table.lenHisto, table.suffixLim)
+	}
+	want := byteOnlyOutput(table, input)
+	buffer := make([]byte, 0, 2*len(input)+outputPadding)
+	if got := table.EncodeInto(buffer, input); !bytes.Equal(got, want) {
+		b.Fatal("pre-benchmark EncodeInto output mismatch")
+	}
+
+	var output []byte
+	b.ReportAllocs()
+	b.SetBytes(int64(len(input)))
+	b.ResetTimer()
+	for b.Loop() {
+		output = table.EncodeInto(buffer, input)
+	}
+	b.StopTimer()
+	if !bytes.Equal(output, want) {
+		b.Fatal("post-benchmark EncodeInto output mismatch")
+	}
+}
+
 // TestTableLimits tests table behavior at limits
 func TestTableLimits(t *testing.T) {
 	// Test with many unique patterns to approach symbol limit
