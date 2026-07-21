@@ -331,11 +331,12 @@ func (t *Table12) Decode(buf, src []byte) []byte {
 	if len(src) == 0 {
 		return buf[:0]
 	}
-	if buf == nil && t.shouldPreflight(src) {
-		buf = make([]byte, t.decodedLen(src)+8)
-	}
 	if buf == nil {
-		buf = make([]byte, len(src)*2+8)
+		if t.shouldPreflight(src) {
+			buf = make([]byte, t.decodedLen(src)+7)
+		} else {
+			buf = make([]byte, len(src)*2+8)
+		}
 	} else {
 		buf = buf[:0]
 		if cap(buf) < 8 {
@@ -345,10 +346,6 @@ func (t *Table12) Decode(buf, src []byte) []byte {
 		}
 	}
 
-	return t.decodePrepared(buf, src)
-}
-
-func (t *Table12) decodePrepared(buf, src []byte) []byte {
 	bufPos := 0
 	bufCap := len(buf)
 
