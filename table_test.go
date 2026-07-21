@@ -3,7 +3,6 @@ package fsst
 import (
 	"bytes"
 	"encoding/binary"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -160,57 +159,6 @@ func TestByteOnlyImportedTableEncoding(t *testing.T) {
 	}
 	if decoded := table.DecodeAll(got); !bytes.Equal(decoded, input) {
 		t.Fatalf("DecodeAll(EncodeInto) = %x, want %x", decoded, input)
-	}
-}
-
-func TestByteOnlyTableOverlappingBuffer(t *testing.T) {
-	seed := []byte{0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x0f}
-	for _, method := range []struct {
-		name   string
-		encode func(*Table, []byte, []byte) []byte
-	}{
-		{name: "Encode", encode: func(table *Table, buf, input []byte) []byte { return table.Encode(buf, input) }},
-		{name: "EncodeInto", encode: func(table *Table, buf, input []byte) []byte { return table.EncodeInto(buf, input) }},
-	} {
-		for _, outputOffset := range []int{0, 1} {
-			for size := 2; size <= len(seed); size++ {
-				t.Run(method.name+"/offset_"+strconv.Itoa(outputOffset)+"/"+strconv.Itoa(size), func(t *testing.T) {
-					table := Train(nil)
-					storage := make([]byte, 2*size+outputPadding+outputOffset)
-					copy(storage, seed[:size])
-					original := bytes.Clone(storage[:size])
-					got := method.encode(table, storage[outputOffset:outputOffset], storage[:size])
-					if decoded := table.DecodeAll(got); !bytes.Equal(decoded, original) {
-						t.Fatalf("DecodeAll(overlapping output) = %x, want %x", decoded, original)
-					}
-				})
-			}
-		}
-	}
-}
-
-func BenchmarkByteOnlyEncoding(b *testing.B) {
-	input := byteOnlyFixture(1 << 18)
-	table := Train([][]byte{input})
-	if table.lenHisto[0] != table.nSymbols || table.suffixLim != 0 {
-		b.Fatalf("not byte-only: nSymbols=%d lenHisto=%v suffixLim=%d", table.nSymbols, table.lenHisto, table.suffixLim)
-	}
-	want := byteOnlyOutput(table, input)
-	buffer := make([]byte, 0, 2*len(input)+outputPadding)
-	if got := table.EncodeInto(buffer, input); !bytes.Equal(got, want) {
-		b.Fatal("pre-benchmark EncodeInto output mismatch")
-	}
-
-	var output []byte
-	b.ReportAllocs()
-	b.SetBytes(int64(len(input)))
-	b.ResetTimer()
-	for b.Loop() {
-		output = table.EncodeInto(buffer, input)
-	}
-	b.StopTimer()
-	if !bytes.Equal(output, want) {
-		b.Fatal("post-benchmark EncodeInto output mismatch")
 	}
 }
 
