@@ -216,6 +216,94 @@ func compareQsym(left, right qsym) int {
 	}
 }
 
+func radixSortByLength(src, dst []qsym) {
+	var counts [9]int
+	for _, candidate := range src {
+		counts[candidate.symbol.length()]++
+	}
+	for i := 1; i < len(counts); i++ {
+		counts[i] += counts[i-1]
+	}
+	for i := len(src) - 1; i >= 0; i-- {
+		candidate := src[i]
+		bucket := candidate.symbol.length()
+		counts[bucket]--
+		dst[counts[bucket]] = candidate
+	}
+}
+
+func radixSortByByte(src, dst []qsym, shift uint, invertedGain bool) {
+	var counts [256]int
+	for _, candidate := range src {
+		value := candidate.symbol.val
+		if invertedGain {
+			value = uint64(^candidate.gain)
+		}
+		counts[uint8(value>>shift)]++
+	}
+	for i := 1; i < len(counts); i++ {
+		counts[i] += counts[i-1]
+	}
+	for i := len(src) - 1; i >= 0; i-- {
+		candidate := src[i]
+		value := candidate.symbol.val
+		if invertedGain {
+			value = uint64(^candidate.gain)
+		}
+		bucket := uint8(value >> shift)
+		counts[bucket]--
+		dst[counts[bucket]] = candidate
+	}
+}
+
+// sortCandidates preserves compareQsym's total order without comparator calls.
+// The bounded selection workspace has an unused second prefix after selection,
+// which provides the stable radix passes with no additional allocation.
+func sortCandidates(candidates []qsym) {
+	if len(candidates) < maxCandidateSymbols {
+		slices.SortFunc(candidates, compareQsym)
+		return
+	}
+
+	first := candidates[0]
+	var valueDiff uint64
+	var gainDiff uint32
+	var lengthDiff uint32
+	for _, candidate := range candidates[1:] {
+		valueDiff |= candidate.symbol.val ^ first.symbol.val
+		gainDiff |= candidate.gain ^ first.gain
+		lengthDiff |= candidate.symbol.length() ^ first.symbol.length()
+	}
+
+	scratch := candidates[maxCandidateSymbols : maxCandidateSymbols+len(candidates)]
+	src, dst := candidates, scratch
+	inScratch := false
+	if lengthDiff != 0 {
+		radixSortByLength(src, dst)
+		src, dst = dst, src
+		inScratch = !inScratch
+	}
+	for shift := uint(0); shift < 64; shift += 8 {
+		if uint8(valueDiff>>shift) == 0 {
+			continue
+		}
+		radixSortByByte(src, dst, shift, false)
+		src, dst = dst, src
+		inScratch = !inScratch
+	}
+	for shift := uint(0); shift < 32; shift += 8 {
+		if uint8(gainDiff>>shift) == 0 {
+			continue
+		}
+		radixSortByByte(src, dst, shift, true)
+		src, dst = dst, src
+		inScratch = !inScratch
+	}
+	if inScratch {
+		copy(candidates, src)
+	}
+}
+
 // selectStrongestCandidates partitions candidates so its strongest retained
 // prefix is maxCandidateSymbols elements long.
 func selectStrongestCandidates(candidates []qsym) {
@@ -341,7 +429,7 @@ func selectCandidates(candidates map[[2]uint64]qsym, list *[]qsym) {
 		selectStrongestCandidates(selected)
 		selected = selected[:maxCandidateSymbols]
 	}
-	slices.SortFunc(selected, compareQsym)
+	sortCandidates(selected)
 	*list = selected
 }
 
