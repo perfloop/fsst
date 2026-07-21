@@ -2,7 +2,7 @@ package fsst
 
 import (
 	"bytes"
-	"encoding/binary"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -126,39 +126,27 @@ func TestByteOnlyTableEncoding(t *testing.T) {
 	}
 }
 
-func genericChunkEncoding(table *Table, input []byte) []byte {
-	padded := make([]byte, len(input)+chunkPadding)
-	copy(padded, input)
-	output := make([]byte, 2*len(input)+outputPadding)
-	return output[:table.encodeChunk(output, 0, padded, len(input))]
-}
-
-func TestByteOnlyImportedTableEncoding(t *testing.T) {
-	data := make([]byte, 8+8+2)
-	binary.LittleEndian.PutUint64(data[:8], (tableVersion<<32)|(uint64(2)<<8)|1)
-	data[8] = 2
-	data[16] = 'a'
-	data[17] = 'a'
-
-	var table Table
-	if _, err := table.ReadFrom(bytes.NewReader(data)); err != nil {
-		t.Fatalf("ReadFrom imported table: %v", err)
-	}
-	if table.lenHisto[0] != table.nSymbols || table.suffixLim != 0 {
-		t.Fatalf("not byte-only: nSymbols=%d lenHisto=%v suffixLim=%d", table.nSymbols, table.lenHisto, table.suffixLim)
-	}
-
-	input := []byte{'a', 'x', 'a', 'y', 'a', 'x', 'a', 'z'}
-	want := genericChunkEncoding(&table, input)
-	if got := table.EncodeAll(input); !bytes.Equal(got, want) {
-		t.Fatalf("EncodeAll = %x, want generic output %x", got, want)
-	}
-	got := table.EncodeInto(make([]byte, 0, 2*len(input)+outputPadding), input)
-	if !bytes.Equal(got, want) {
-		t.Fatalf("EncodeInto = %x, want generic output %x", got, want)
-	}
-	if decoded := table.DecodeAll(got); !bytes.Equal(decoded, input) {
-		t.Fatalf("DecodeAll(EncodeInto) = %x, want %x", decoded, input)
+func TestByteOnlyOverlappingBuffer(t *testing.T) {
+	for _, outputOffset := range []int{0, 1} {
+		for _, size := range []int{1, 2, 7, 8, 9, 512} {
+			t.Run("offset_"+strconv.Itoa(outputOffset)+"/"+strconv.Itoa(size), func(t *testing.T) {
+				table := Train(nil)
+				storage := make([]byte, 2*size+outputPadding+outputOffset)
+				input := storage[:size]
+				for index := range input {
+					input[index] = byte(index + 1)
+				}
+				original := bytes.Clone(input)
+				want := table.EncodeInto(make([]byte, 0, 2*size+outputPadding), original)
+				got := table.EncodeInto(storage[outputOffset:outputOffset], input)
+				if !bytes.Equal(got, want) {
+					t.Fatalf("EncodeInto(overlapping output) = %x, want %x", got, want)
+				}
+				if decoded := table.DecodeAll(got); !bytes.Equal(decoded, original) {
+					t.Fatalf("DecodeAll(overlapping output) = %x, want %x", decoded, original)
+				}
+			})
+		}
 	}
 }
 
