@@ -65,8 +65,12 @@ func TestRebuildTableRoundtrip(t *testing.T) {
 }
 
 func byteOnlyFixture(size int) []byte {
+	return byteOnlyFixtureWithSeed(size, 0x9e3779b97f4a7c15)
+}
+
+func byteOnlyFixtureWithSeed(size int, seed uint64) []byte {
 	data := make([]byte, size)
-	state := uint64(0x9e3779b97f4a7c15)
+	state := seed
 	for i := range data {
 		state ^= state << 13
 		state ^= state >> 7
@@ -124,6 +128,50 @@ func TestByteOnlyTableEncoding(t *testing.T) {
 			}
 		})
 	}
+}
+
+func benchmarkByteOnlyEncodeInto(b *testing.B, table *Table, input, want []byte) {
+	b.Helper()
+	buffer := make([]byte, 0, 2*len(input)+outputPadding)
+	if got := table.EncodeInto(buffer, input); !bytes.Equal(got, want) {
+		b.Fatal("pre-benchmark EncodeInto output mismatch")
+	}
+
+	var output []byte
+	b.ReportAllocs()
+	b.SetBytes(int64(len(input)))
+	b.ResetTimer()
+	for b.Loop() {
+		output = table.EncodeInto(buffer, input)
+	}
+	b.StopTimer()
+
+	if !bytes.Equal(output, want) {
+		b.Fatal("post-benchmark EncodeInto output mismatch")
+	}
+}
+
+func BenchmarkByteOnlyEncoding(b *testing.B) {
+	b.Run("HighEntropy256KiB", func(b *testing.B) {
+		input := byteOnlyFixtureWithSeed(1<<18, 0x9e3779b97f4a7c30)
+		table := Train([][]byte{input})
+		if table.lenHisto[0] != table.nSymbols || table.suffixLim != 0 {
+			b.Fatalf("not byte-only: nSymbols=%d lenHisto=%v suffixLim=%d", table.nSymbols, table.lenHisto, table.suffixLim)
+		}
+		benchmarkByteOnlyEncodeInto(b, table, input, byteOnlyOutput(table, input))
+	})
+
+	b.Run("MultiByteControl", func(b *testing.B) {
+		input := bytes.Repeat([]byte("the quick brown fox jumps over the lazy dog "), 16)
+		table := Train([][]byte{input})
+		for _, count := range table.lenHisto[1:] {
+			if count != 0 {
+				benchmarkByteOnlyEncodeInto(b, table, input, table.EncodeAll(input))
+				return
+			}
+		}
+		b.Fatal("control table has no multibyte symbols")
+	})
 }
 
 func TestByteOnlyOverlappingBuffer(t *testing.T) {
