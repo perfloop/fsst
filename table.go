@@ -407,6 +407,10 @@ func (t *Table) Encode(buf, input []byte) []byte {
 		buf = buf[:cap(buf)]
 	}
 
+	if t.lenHisto[0] == t.nSymbols && t.suffixLim == 0 {
+		return t.encodeByteOnly(buf, input)
+	}
+
 	outPos := 0
 	inputLen := len(input)
 	position := 0
@@ -425,6 +429,23 @@ func (t *Table) Encode(buf, input []byte) []byte {
 		outPos = t.encodeChunk(buf, outPos, t.encBuf, tailLen)
 	}
 	return buf[:outPos]
+}
+
+// encodeByteOnly compresses with byteCodes when the table has no multibyte
+// symbols. The generic short-code and hash lookups cannot produce a match for
+// this table shape, so each input byte maps directly to a code or escape.
+func (t *Table) encodeByteOnly(dst, input []byte) []byte {
+	dstPos := 0
+	for _, value := range input {
+		code := t.byteCodes[value]
+		dst[dstPos] = uint8(code)
+		dstPos++
+		if code&codeBase != 0 {
+			dst[dstPos] = value
+			dstPos++
+		}
+	}
+	return dst[:dstPos]
 }
 
 // EncodeInto compresses input while reusing buf. It is the named-buffer form
