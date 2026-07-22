@@ -67,24 +67,23 @@ func TestSelectCandidatesKeepsStrongestInDescendingOrder(t *testing.T) {
 	const extraCandidates = 100
 	candidates := make(map[[2]uint64]qsym, maxCandidateSymbols+extraCandidates)
 	for i := range maxCandidateSymbols + extraCandidates {
-		sym := newSymbolFromBytes([]byte{byte(i), byte(i >> 8)})
+		sym := newSymbolFromBytes([]byte{byte(i), byte(i >> 8), byte(i >> 16), byte(i >> 24)})
 		candidates[[2]uint64{sym.val, uint64(sym.length())}] = qsym{
 			symbol: sym,
-			gain:   uint32(i),
+			gain:   uint32(i+1) * uint32(sym.length()),
 		}
 	}
 
-	heap := make(qsymHeap, 0, maxCandidateSymbols)
-	list := make([]qsym, 0, maxCandidateSymbols)
-	selectCandidates(candidates, &heap, &list)
+	scratch := make([]qsym, 0, maxCandidateSymbols*2)
+	list := selectTopCandidates(candidates, &scratch)
 
 	if len(list) != maxCandidateSymbols {
 		t.Fatalf("selected %d candidates, want %d", len(list), maxCandidateSymbols)
 	}
-	if got, want := list[0].gain, uint32(maxCandidateSymbols+extraCandidates-1); got != want {
+	if got, want := list[0].gain, uint32(maxCandidateSymbols+extraCandidates)*4; got != want {
 		t.Fatalf("strongest gain is %d, want %d", got, want)
 	}
-	if got, want := list[len(list)-1].gain, uint32(extraCandidates); got != want {
+	if got, want := list[len(list)-1].gain, uint32(extraCandidates+1)*4; got != want {
 		t.Fatalf("weakest selected gain is %d, want %d", got, want)
 	}
 	for i := 1; i < len(list); i++ {
