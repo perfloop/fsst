@@ -45,15 +45,15 @@ func TestTrainArtOfWarSelectionStable(t *testing.T) {
 
 const benchmarkSelectionScratchSymbols = maxCandidateSymbols * 2
 
-// benchmarkArtOfWarCandidates reaches candidate selection through the same
-// sample, counters, and candidate construction that Train uses. Its map values
+// artOfWarCandidates reaches candidate selection through the same sample,
+// counters, and candidate construction that Train uses. Its map values
 // therefore satisfy buildCandidates' gain and symbol-length relationships.
-func benchmarkArtOfWarCandidates(b *testing.B) map[[2]uint64]qsym {
-	b.Helper()
+func artOfWarCandidates(tb testing.TB) map[[2]uint64]qsym {
+	tb.Helper()
 
 	data, err := os.ReadFile("testdata/art_of_war.txt")
 	if err != nil {
-		b.Fatalf("read corpus: %v", err)
+		tb.Fatalf("read corpus: %v", err)
 	}
 
 	sample := makeSample([][]byte{data})
@@ -68,13 +68,22 @@ func benchmarkArtOfWarCandidates(b *testing.B) map[[2]uint64]qsym {
 		buildCandidates(table, &counter, frac, candidates, &heap, &list)
 	}
 	if got := len(candidates); got <= benchmarkSelectionScratchSymbols {
-		b.Fatalf("candidate map has %d entries, want more than %d", got, benchmarkSelectionScratchSymbols)
+		tb.Fatalf("candidate map has %d entries, want more than %d", got, benchmarkSelectionScratchSymbols)
 	}
 	return candidates
 }
 
+func TestArtOfWarCandidateMapExceedsSelectionBatch(t *testing.T) {
+	const wantCandidates = 3546
+	candidates := artOfWarCandidates(t)
+	if got := len(candidates); got != wantCandidates {
+		t.Fatalf("candidate map has %d entries, want %d", got, wantCandidates)
+	}
+	t.Logf("art_of_war candidates=%d", len(candidates))
+}
+
 func BenchmarkSelectCandidatesArtOfWar(b *testing.B) {
-	candidates := benchmarkArtOfWarCandidates(b)
+	candidates := artOfWarCandidates(b)
 	heap := make(qsymHeap, 0, benchmarkSelectionScratchSymbols)
 	list := make([]qsym, 0, maxCandidateSymbols)
 
