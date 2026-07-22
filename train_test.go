@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -256,7 +257,8 @@ func BenchmarkCorpusCompressionSuite(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for b.Loop() {
-					_ = Train([][]byte{data})
+					table := Train([][]byte{data})
+					runtime.KeepAlive(table)
 				}
 			})
 
