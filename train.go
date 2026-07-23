@@ -183,7 +183,17 @@ type qsym struct {
 	gain   uint32
 }
 
+// These counters are enabled only by the case-proof benchmark and are removed
+// with that harness before an upstream contribution.
+var (
+	selectionComparisonCounting bool
+	selectionComparisonCount    uint64
+)
+
 func (q qsym) betterThan(other qsym) bool {
+	if selectionComparisonCounting {
+		selectionComparisonCount++
+	}
 	if q.gain != other.gain {
 		return q.gain > other.gain
 	}
