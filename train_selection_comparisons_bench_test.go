@@ -26,6 +26,7 @@ func BenchmarkTrainSelectionComparisons(b *testing.B) {
 	)
 	for b.Loop() {
 		selectionComparisonCount = 0
+		selectionInvocationCount = 0
 		selectionComparisonCounting = true
 		result = Train(inputs)
 		selectionComparisonCounting = false
@@ -35,4 +36,28 @@ func BenchmarkTrainSelectionComparisons(b *testing.B) {
 		b.Fatal("Train did not produce a populated table")
 	}
 	b.ReportMetric(float64(total)/float64(b.N), "qsym-comparisons/op")
+}
+
+// TestTrainSelectionInvokesSelectorFiveTimes proves that the same public
+// bounded corpus reaches selectCandidates once for each fixed Train round.
+func TestTrainSelectionInvokesSelectorFiveTimes(t *testing.T) {
+	data, err := os.ReadFile("testdata/art_of_war.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	selectionComparisonCount = 0
+	selectionInvocationCount = 0
+	selectionComparisonCounting = true
+	defer func() {
+		selectionComparisonCounting = false
+	}()
+
+	table := Train([][]byte{data})
+	if table.nSymbols == 0 {
+		t.Fatal("Train did not produce a populated table")
+	}
+	if got, want := selectionInvocationCount, uint64(5); got != want {
+		t.Fatalf("selectCandidates calls = %d, want %d", got, want)
+	}
 }

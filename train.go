@@ -188,6 +188,7 @@ type qsym struct {
 var (
 	selectionComparisonCounting bool
 	selectionComparisonCount    uint64
+	selectionInvocationCount    uint64
 )
 
 func (q qsym) betterThan(other qsym) bool {
@@ -331,6 +332,9 @@ func buildCandidates(t *Table, c *counters, frac int, candidates map[[2]uint64]q
 }
 
 func selectCandidates(candidates map[[2]uint64]qsym, h *qsymHeap, list *[]qsym) {
+	if selectionComparisonCounting {
+		selectionInvocationCount++
+	}
 	*h = (*h)[:0]
 	for _, candidate := range candidates {
 		if len(*h) < maxCandidateSymbols {
