@@ -17,37 +17,39 @@ func TestTable12TrainingIndicesMatchRebuild(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			inputs := train12FinalizeCorpus(tc.name, tc.records)
-			trained := Train12(inputs)
+			installed := train12FinalCandidateTable(inputs)
+			installed.buildDecoderTables()
+			installed.encBuf = make([]byte, chunkSize+chunkPadding)
+			finalized := Train12(inputs)
 
-			serialized, err := trained.MarshalBinary()
-			if err != nil {
-				t.Fatalf("marshal trained table: %v", err)
+			assertTable12EncoderIndicesEqual(t, installed, finalized)
+			if installed.symbols != finalized.symbols || installed.nSymbols != finalized.nSymbols || installed.lenHisto != finalized.lenHisto {
+				t.Fatal("finalization changed selected-symbol order or metadata")
 			}
-			var rebuilt Table12
-			if err := rebuilt.UnmarshalBinary(serialized); err != nil {
-				t.Fatalf("unmarshal trained table: %v", err)
-			}
-
-			assertTable12EncoderIndicesEqual(t, trained, &rebuilt)
-			if trained.symbols != rebuilt.symbols {
-				t.Fatal("trained and rebuilt symbol order differs")
-			}
-			if trained.nSymbols != rebuilt.nSymbols || trained.lenHisto != rebuilt.lenHisto {
-				t.Fatal("trained and rebuilt symbol metadata differs")
-			}
-			if trained.decLen != rebuilt.decLen || trained.decSymbol != rebuilt.decSymbol {
-				t.Fatal("trained and rebuilt decoder tables differ")
+			if installed.decLen != finalized.decLen || installed.decSymbol != finalized.decSymbol {
+				t.Fatal("finalization changed decoder tables")
 			}
 
+			byteCodes := installed.byteCodes
+			shortCodes := installed.shortCodes
+			hashTab := installed.hashTab
+			encoded := make([][]byte, len(inputs))
 			for i, input := range inputs {
-				encoded := trained.EncodeAll(input)
-				if decoded := trained.DecodeAll(encoded); !bytes.Equal(decoded, input) {
-					t.Fatalf("trained table roundtrip mismatch for input %d", i)
+				encoded[i] = installed.EncodeAll(input)
+				if decoded := installed.DecodeAll(encoded[i]); !bytes.Equal(decoded, input) {
+					t.Fatalf("installed table roundtrip mismatch for input %d", i)
 				}
-				if rebuiltEncoded := rebuilt.EncodeAll(input); !bytes.Equal(rebuiltEncoded, encoded) {
-					t.Fatalf("rebuilt table encoding mismatch for input %d", i)
+			}
+
+			installed.rebuildIndices()
+			if installed.byteCodes != byteCodes || installed.shortCodes != shortCodes || installed.hashTab != hashTab {
+				t.Fatal("rebuild changed indices installed by final candidate selection")
+			}
+			for i, input := range inputs {
+				if rebuiltEncoded := installed.EncodeAll(input); !bytes.Equal(rebuiltEncoded, encoded[i]) {
+					t.Fatalf("rebuild changed encoding for input %d", i)
 				}
-				if decoded := rebuilt.DecodeAll(encoded); !bytes.Equal(decoded, input) {
+				if decoded := installed.DecodeAll(encoded[i]); !bytes.Equal(decoded, input) {
 					t.Fatalf("rebuilt table decode mismatch for input %d", i)
 				}
 			}
@@ -79,6 +81,24 @@ func TestTable12AddSymbolIndicesMatchRebuildWithCollision(t *testing.T) {
 	table.rebuildIndices()
 	if table.byteCodes != byteCodes || table.shortCodes != shortCodes || table.hashTab != hashTab {
 		t.Fatal("rebuild changed indices installed by addSymbol")
+	}
+}
+
+func train12FinalCandidateTable(inputs [][]byte) *Table12 {
+	sample := makeSample(inputs)
+	table := newTable12()
+	counter := &counters12{}
+	candidates := make(map[[2]uint64]qsym12, 1024)
+	heap := make(qsymHeap12, 0, fsst12MaxSymbols+1)
+	list := make([]qsym12, 0, fsst12MaxSymbols)
+
+	for frac := 8; ; frac += 30 {
+		*counter = counters12{}
+		compressCount12(table, counter, sample, frac)
+		buildCandidates12(table, counter, frac, candidates, &heap, &list)
+		if frac >= 128 {
+			return table
+		}
 	}
 }
 
