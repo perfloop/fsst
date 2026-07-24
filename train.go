@@ -192,22 +192,10 @@ func (q qsym) betterThan(other qsym) bool {
 }
 
 func compareQsym(a, b qsym) int {
-	if a.gain != b.gain {
-		if a.gain > b.gain {
-			return -1
-		}
-		return 1
-	}
-	if a.symbol.val != b.symbol.val {
-		if a.symbol.val < b.symbol.val {
-			return -1
-		}
-		return 1
-	}
-	if a.symbol.length() < b.symbol.length() {
+	if a.betterThan(b) {
 		return -1
 	}
-	if a.symbol.length() > b.symbol.length() {
+	if b.betterThan(a) {
 		return 1
 	}
 	return 0
