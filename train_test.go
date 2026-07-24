@@ -64,7 +64,7 @@ func TestTrainDeterministicManyCandidates(t *testing.T) {
 }
 
 func TestSelectCandidatesKeepsStrongestInDescendingOrder(t *testing.T) {
-	const extraCandidates = 100
+	const extraCandidates = maxCandidateSymbols * 3
 	candidates := make(map[[2]uint64]qsym, maxCandidateSymbols+extraCandidates)
 	for i := range maxCandidateSymbols + extraCandidates {
 		sym := newSymbolFromBytes([]byte{byte(i), byte(i >> 8)})
@@ -74,9 +74,8 @@ func TestSelectCandidatesKeepsStrongestInDescendingOrder(t *testing.T) {
 		}
 	}
 
-	heap := make(qsymHeap, 0, maxCandidateSymbols)
-	list := make([]qsym, 0, maxCandidateSymbols)
-	selectCandidates(candidates, &heap, &list)
+	var scratch [maxCandidateSymbols * 2]qsym
+	list := selectCandidates(candidates, &scratch)
 
 	if len(list) != maxCandidateSymbols {
 		t.Fatalf("selected %d candidates, want %d", len(list), maxCandidateSymbols)
