@@ -37,8 +37,8 @@ const (
 	rngSeed = 4637947
 
 	// Keep enough ranked candidates to replace symbols rejected by hash-table
-	// collisions. Limiting the heap to maxSymbols can leave the table partially
-	// filled and materially degrade compression.
+	// collisions. Retaining only maxSymbols candidates can leave the table
+	// partially filled and materially degrade compression.
 	maxCandidateSymbols = maxSymbols * 2
 )
 
