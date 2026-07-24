@@ -93,6 +93,29 @@ func TestSelectCandidatesKeepsStrongestInDescendingOrder(t *testing.T) {
 	}
 }
 
+func TestCompareQsymMatchesBetterThan(t *testing.T) {
+	candidates := []qsym{
+		{symbol: newSymbolFromBytes([]byte{0x01}), gain: 16},
+		{symbol: newSymbolFromBytes([]byte{0x02}), gain: 16},
+		{symbol: newSymbolFromBytes([]byte{0x01, 0x00}), gain: 16},
+		{symbol: newSymbolFromBytes([]byte{0x01, 0x01}), gain: 14},
+	}
+	for i, a := range candidates {
+		for j, b := range candidates {
+			want := 0
+			switch {
+			case a.betterThan(b):
+				want = -1
+			case b.betterThan(a):
+				want = 1
+			}
+			if got := compareQsym(a, b); got != want {
+				t.Fatalf("compare(%d, %d) = %d, want %d", i, j, got, want)
+			}
+		}
+	}
+}
+
 func TestTrainEncodeDecode(t *testing.T) {
 	inputs := [][]byte{
 		[]byte("hello world"),
