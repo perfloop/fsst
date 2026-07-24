@@ -183,9 +183,8 @@ func (t *Table12) findLongestSymbol(sym symbol) uint16 {
 	return uint16(sym.first())
 }
 
-// finalize builds encoder and decoder tables.
+// finalize completes training after buildCandidates12 installs the encoder indices.
 func (t *Table12) finalize() {
-	t.rebuildIndices()
 	t.buildDecoderTables()
 	t.encBuf = make([]byte, chunkSize+chunkPadding)
 }
