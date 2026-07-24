@@ -138,6 +138,20 @@ func BenchmarkTrain12Finalization(b *testing.B) {
 	}
 }
 
+func BenchmarkTable12Finalization(b *testing.B) {
+	inputs := train12FinalizeCorpus(b.Name(), 32)
+	table := train12FinalCandidateTable(inputs)
+	table.buildDecoderTables()
+	table.encBuf = make([]byte, chunkSize+chunkPadding)
+	assertTable12RoundTrip(b, table, inputs)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		table.finalize()
+	}
+	assertTable12RoundTrip(b, table, inputs)
+}
+
 func BenchmarkTable12RebuildIndices(b *testing.B) {
 	inputs := train12FinalizeCorpus(b.Name(), 32)
 	table := Train12(inputs)
